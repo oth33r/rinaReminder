@@ -37,6 +37,7 @@ BTN_CLEAR_ALL = "Удалить все"
 FLOW_KEY = "flow"
 EDIT_ID_KEY = "edit_id"
 TEMP_TIME_KEY = "temp_time"
+RECENT_COMPLIMENTS_LIMIT = 5
 
 CUTE_MESSAGES = [
     "Умничка, котенок❤️",
@@ -63,7 +64,7 @@ COMPLIMENT_MESSAGES = [
     "Ты как теплый пледик для души, рядом с тобой становится спокойнее🥰",
     "Котенок, ты заслуживаешь самый нежный и хороший день😌",
     "Даже если день сложный, ты все равно остаешься невероятной🥺",
-    "Ты очень красивая, но самое unfair — какая ты еще и добрая, ю ноу?))",,
+    "Ты очень красивая, но самое unfair — какая ты еще и добрая, ю ноу?))",
     "Ты моя самая приятная мысль за день, особенно в начале дня)",
     "Если бы нежность с нотками безумия была человеком, она бы точно выглядела как ты",
     "Котенок, ты не просто чудесная, ты прям отдельный вид чуда🥰",
@@ -85,6 +86,7 @@ class Reminder:
 class UserState:
     reminders: list[Reminder] = field(default_factory=list)
     next_id: int = 1
+    recent_compliments: list[str] = field(default_factory=list)
 
 
 class Storage:
@@ -102,7 +104,11 @@ class Storage:
             if "reminders" in payload:
                 reminders = [Reminder(**item) for item in payload.get("reminders", [])]
                 next_id = payload.get("next_id", max((r.id for r in reminders), default=0) + 1)
-                self.data[chat_id] = UserState(reminders=reminders, next_id=next_id)
+                self.data[chat_id] = UserState(
+                    reminders=reminders,
+                    next_id=next_id,
+                    recent_compliments=payload.get("recent_compliments", []),
+                )
                 continue
 
             reminder_time = payload.get("reminder_time")
@@ -118,7 +124,11 @@ class Storage:
                         last_reminder_at=payload.get("last_reminder_at"),
                     )
                 )
-            self.data[chat_id] = UserState(reminders=reminders, next_id=2)
+            self.data[chat_id] = UserState(
+                reminders=reminders,
+                next_id=2,
+                recent_compliments=payload.get("recent_compliments", []),
+            )
 
     def save(self) -> None:
         serialized = {chat_id: asdict(state) for chat_id, state in self.data.items()}
@@ -209,6 +219,16 @@ def reminder_text(reminder: Reminder) -> str:
     )
 
 
+def choose_compliment(state: UserState) -> str:
+    recent = set(state.recent_compliments[-RECENT_COMPLIMENTS_LIMIT:])
+    candidates = [message for message in COMPLIMENT_MESSAGES if message not in recent]
+    compliment = random.choice(candidates or COMPLIMENT_MESSAGES)
+    state.recent_compliments = (
+        state.recent_compliments + [compliment]
+    )[-RECENT_COMPLIMENTS_LIMIT:]
+    return compliment
+
+
 async def reply_menu(update: Update, text: str) -> None:
     await update.effective_message.reply_text(text, reply_markup=main_menu())
 
@@ -272,7 +292,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if text == BTN_COMPLIMENT:
         clear_flow(context)
-        await reply_menu(update, random.choice(COMPLIMENT_MESSAGES))
+        compliment = choose_compliment(state)
+        storage.update(chat_id, state)
+        await reply_menu(update, compliment)
         return
 
     if text == BTN_CLEAR_ALL:
@@ -368,15 +390,18 @@ async def took_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def compliment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     chat_id = query.message.chat_id
-    state = get_storage(context.application).get(chat_id)
+    storage = get_storage(context.application)
+    state = storage.get(chat_id)
     reminder = find_reminder(state, int(query.data.split(":")[1]))
 
     if reminder is None:
         await query.answer("Эта запись уже удалена или изменена.", show_alert=True)
         return
 
+    compliment = choose_compliment(state)
+    storage.update(chat_id, state)
     await query.answer("Лови комплиментик.")
-    await query.message.reply_text(f"{random.choice(COMPLIMENT_MESSAGES)}\n\nДля записи: {reminder.description}")
+    await query.message.reply_text(f"{compliment}\n\nДля записи: {reminder.description}")
 
 
 async def edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
