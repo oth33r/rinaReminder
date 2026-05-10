@@ -87,6 +87,7 @@ class UserState:
     reminders: list[Reminder] = field(default_factory=list)
     next_id: int = 1
     recent_compliments: list[str] = field(default_factory=list)
+    compliment_queue: list[str] = field(default_factory=list)
 
 
 class Storage:
@@ -108,6 +109,7 @@ class Storage:
                     reminders=reminders,
                     next_id=next_id,
                     recent_compliments=payload.get("recent_compliments", []),
+                    compliment_queue=payload.get("compliment_queue", []),
                 )
                 continue
 
@@ -128,6 +130,7 @@ class Storage:
                 reminders=reminders,
                 next_id=2,
                 recent_compliments=payload.get("recent_compliments", []),
+                compliment_queue=payload.get("compliment_queue", []),
             )
 
     def save(self) -> None:
@@ -220,9 +223,21 @@ def reminder_text(reminder: Reminder) -> str:
 
 
 def choose_compliment(state: UserState) -> str:
-    recent = set(state.recent_compliments[-RECENT_COMPLIMENTS_LIMIT:])
-    candidates = [message for message in COMPLIMENT_MESSAGES if message not in recent]
-    compliment = random.choice(candidates or COMPLIMENT_MESSAGES)
+    recent = state.recent_compliments[-RECENT_COMPLIMENTS_LIMIT:]
+    recent_set = set(recent)
+    state.compliment_queue = [
+        message
+        for message in state.compliment_queue
+        if message in COMPLIMENT_MESSAGES and message not in recent_set
+    ]
+
+    if not state.compliment_queue:
+        state.compliment_queue = [
+            message for message in COMPLIMENT_MESSAGES if message not in recent_set
+        ]
+        random.shuffle(state.compliment_queue)
+
+    compliment = state.compliment_queue.pop()
     state.recent_compliments = (
         state.recent_compliments + [compliment]
     )[-RECENT_COMPLIMENTS_LIMIT:]
